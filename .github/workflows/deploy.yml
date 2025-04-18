@@ -1,21 +1,46 @@
+name: CI/CD Deploy to AWS S3
+
 on:
   push:
-    tags:
-      - '*'
+    branches:
+      - main
 
 jobs:
-  build:
-    name: Create Release
+  deploy:
     runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v2
+    env:
+      BUCKET_NAME: my-sample-app-bucket
 
-      - name: Create Release
-        id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ github.ref }}
-          release_name: Release ${{ github.ref }}
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v3
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Build application
+      run: npm run build
+
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: us-east-1
+
+    - name: Deploy to S3
+      run: |
+        aws s3 sync ./build s3://${{ env.BUCKET_NAME }} --delete
+
+    - name: Verify Deployment
+      run: |
+        curl --fail https://${{ env.BUCKET_NAME }}.s3.amazonaws.com/index.html || exit 1
+
+    - name: Rollback (if deploy fails)
+      if: failure()
+      run: echo "Rollback logic here (e.g., re-upload previous build)"
