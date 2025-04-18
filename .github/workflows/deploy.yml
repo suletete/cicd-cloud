@@ -1,46 +1,91 @@
-name: CI/CD Deploy to AWS S3
+name: CI/CD Deployment Pipeline
 
 on:
   push:
     branches:
       - main
+  workflow_dispatch:
 
 jobs:
-  deploy:
+  version_tag:
+    name: Bump Version and Tag
     runs-on: ubuntu-latest
-    env:
-      BUCKET_NAME: my-sample-app-bucket
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+
+      - name: Bump version and push tag
+        uses: anothrNick/github-tag-action@1.67.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEFAULT_BUMP: patch
+          WITH_V: true
+
+  release:
+    name: Create GitHub Release
+    needs: version_tag
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Create GitHub Release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: Release ${{ github.ref }}
+          draft: false
+          prerelease: false
+
+  deploy:
+    name: Deploy to AWS
+    needs: [version_tag, release]
+    runs-on: ubuntu-latest
+
+    environment:
+      name: production
+      url: https://your-app-domain.com
 
     steps:
-    - name: Checkout Code
-      uses: actions/checkout@v3
+      - name: Checkout code
+        uses: actions/checkout@v2
 
-    - name: Set up Node.js
-      uses: actions/setup-node@v3
-      with:
-        node-version: '18'
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-west-2
 
-    - name: Install dependencies
-      run: npm ci
+      - name: Install dependencies
+        run: |
+          npm install
 
-    - name: Build application
-      run: npm run build
+      - name: Build project
+        run: |
+          npm run build
 
-    - name: Configure AWS Credentials
-      uses: aws-actions/configure-aws-credentials@v2
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: us-east-1
+      - name: Deploy to AWS S3 (example)
+        run: |
+          aws s3 sync ./dist s3://your-s3-bucket-name --delete
 
-    - name: Deploy to S3
-      run: |
-        aws s3 sync ./build s3://${{ env.BUCKET_NAME }} --delete
+      - name: Validate Deployment (optional health check)
+        run: |
+          curl -f https://your-app-domain.com/health || exit 1
 
-    - name: Verify Deployment
-      run: |
-        curl --fail https://${{ env.BUCKET_NAME }}.s3.amazonaws.com/index.html || exit 1
+  rollback:
+    name: Rollback on Failure
+    needs: deploy
+    if: failure()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Notify Rollback
+        run: echo "🚨 Deployment failed! Rolling back..."
 
-    - name: Rollback (if deploy fails)
-      if: failure()
-      run: echo "Rollback logic here (e.g., re-upload previous build)"
+      # Simulate rollback - Replace with actual rollback strategy
+      - name: Restore Previous Version
+        run: |
+          echo "Running rollback logic here (e.g., redeploying previous version from S3 backup or Git tag)"
